@@ -9,9 +9,10 @@ use axum::{debug_handler, extract::State, http::StatusCode, routing::post, Json,
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, time::Duration};
 use structopt::StructOpt;
 use tokio::{net::TcpListener, signal};
+use tower_http::timeout::TimeoutLayer;
 use tracing::{debug, error, info, span, Level};
 use yubihsm::{device::SerialNumber, Connector, Credentials, UsbConfig};
 
@@ -198,7 +199,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/", post(handle_request))
-        .with_state(shared_state);
+        .with_state(shared_state)
+        .layer(TimeoutLayer::new(Duration::from_secs(10)));
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     debug!("listening on {}", listener.local_addr().unwrap());
