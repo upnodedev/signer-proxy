@@ -1,4 +1,4 @@
-mod error;
+mod app_types;
 
 use alloy::{
     network::{EthereumSigner, TransactionBuilder},
@@ -7,9 +7,9 @@ use alloy::{
     rpc::types::eth::request::TransactionRequest,
     signers::wallet::YubiWallet,
 };
-use anyhow::Result as AnyhowResult;
-use axum::{debug_handler, extract::State, routing::post, Json, Router};
-use error::AppError;
+use anyhow::{anyhow, Result as AnyhowResult};
+use app_types::{AppError, AppJson, AppResult};
+use axum::{debug_handler, extract::State, routing::post, Router};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +20,9 @@ use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::debug;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use yubihsm::{device::SerialNumber, Connector, Credentials, UsbConfig};
+
+const USB_TIMEOUT_MS: u64 = 20_000;
+const HTTP_TIMEOUT_SECS: u64 = 10;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "yubihsm-signer-proxy")]
@@ -78,8 +81,8 @@ enum JsonRpcResult<T> {
 #[debug_handler]
 async fn handle_request(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<JsonRpcRequest<Vec<Value>>>,
-) -> Result<Json<JsonRpcReply<Value>>, AppError> {
+    AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
+) -> AppResult<JsonRpcReply<Value>> {
     let method = payload.method.as_str();
     let eth_signer = state.signer.to_owned();
 
@@ -88,13 +91,17 @@ async fn handle_request(
         _ => handle_other_methods(payload, &state.rpc_url).await,
     };
 
-    result.map(|reply| Json(reply)).map_err(AppError)
+    result.map(|reply| AppJson(reply)).map_err(AppError)
 }
 
 async fn handle_eth_sign_transaction(
     payload: JsonRpcRequest<Vec<Value>>,
     signer: EthereumSigner,
 ) -> AnyhowResult<JsonRpcReply<Value>> {
+    if payload.params.is_empty() {
+        return Err(anyhow!("params is empty"));
+    }
+
     let tx_object = payload.params[0].to_owned();
     let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
     let tx_envelope = tx_request.build(&signer).await?;
@@ -135,7 +142,7 @@ async fn main() {
     let serial = SerialNumber::from_str(&opt.device_serial_id).unwrap();
     let connector = Connector::usb(&UsbConfig {
         serial: Some(serial),
-        timeout_ms: 20_000,
+        timeout_ms: USB_TIMEOUT_MS,
     });
     let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
     let yubi_signer = YubiWallet::connect(connector, credentials, opt.signing_key_id);
@@ -151,7 +158,7 @@ async fn main() {
         .with_state(shared_state)
         .layer((
             TraceLayer::new_for_http(),
-            TimeoutLayer::new(Duration::from_secs(10)),
+            TimeoutLayer::new(Duration::from_secs(HTTP_TIMEOUT_SECS)),
         ));
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
