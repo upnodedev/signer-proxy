@@ -1,19 +1,24 @@
-use alloy::primitives::hex;
-use alloy::rlp::Encodable;
+mod error;
+
 use alloy::{
     network::{EthereumSigner, TransactionBuilder},
+    primitives::hex,
+    rlp::Encodable,
     rpc::types::eth::request::TransactionRequest,
     signers::wallet::YubiWallet,
 };
-use axum::{debug_handler, extract::State, http::StatusCode, routing::post, Json, Router};
+use anyhow::Result as AnyhowResult;
+use axum::{debug_handler, extract::State, routing::post, Json, Router};
+use error::AppError;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use structopt::StructOpt;
 use tokio::{net::TcpListener, signal};
-use tower_http::timeout::TimeoutLayer;
-use tracing::{debug, error, info, span, Level};
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use tracing::debug;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use yubihsm::{device::SerialNumber, Connector, Credentials, UsbConfig};
 
 #[derive(StructOpt, Debug)]
@@ -74,116 +79,60 @@ enum JsonRpcResult<T> {
 async fn handle_request(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<JsonRpcRequest<Vec<Value>>>,
-) -> (StatusCode, Json<JsonRpcReply<Value>>) {
-    let span = span!(Level::INFO, "handle_request", method = %payload.method);
-    let _enter = span.enter();
-
-    let jsonrpc = payload.jsonrpc.clone();
+) -> Result<Json<JsonRpcReply<Value>>, AppError> {
     let method = payload.method.as_str();
-    let id = payload.id;
-    let tx_object = payload.params[0].clone();
+    let eth_signer = state.signer.to_owned();
 
     let result = match method {
-        "eth_signTransaction" => {
-            info!("Handling eth_signTransaction: {:#?}", tx_object);
-            handle_eth_sign_transaction(tx_object, state.signer.clone())
-                .await
-                .map(|value| JsonRpcReply {
-                    id,
-                    jsonrpc: jsonrpc.clone(),
-                    result: JsonRpcResult::Result(value),
-                })
-        }
-        _ => {
-            debug!("Proxying request to RPC URL: {:#?}", payload);
-            proxy_request_to_rpc(payload, &state.rpc_url).await
-        }
+        "eth_signTransaction" => handle_eth_sign_transaction(payload, eth_signer).await,
+        _ => handle_other_methods(payload, &state.rpc_url).await,
     };
 
-    result.map_or_else(
-        |(status, message)| {
-            error!(status = %status.as_u16(), "Error handling request: {}", message);
-            (
-                status,
-                Json(JsonRpcReply {
-                    id,
-                    jsonrpc,
-                    result: JsonRpcResult::Error {
-                        code: status.as_u16() as i64,
-                        message,
-                    },
-                }),
-            )
-        },
-        |reply| {
-            info!("Successfully processed request: {:#?}", reply);
-            (StatusCode::OK, Json(reply))
-        },
-    )
+    result.map(|reply| Json(reply)).map_err(AppError)
 }
 
 async fn handle_eth_sign_transaction(
-    tx_object: Value,
+    payload: JsonRpcRequest<Vec<Value>>,
     signer: EthereumSigner,
-) -> Result<Value, (StatusCode, String)> {
-    let span = span!(Level::INFO, "handle_eth_sign_transaction");
-    let _enter = span.enter();
-
-    sign_transaction(signer, tx_object)
-        .await
-        .map(Value::String)
-        .map_err(|e| {
-            error!("Failed to sign transaction: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e)
-        })
-}
-
-async fn sign_transaction(signer: EthereumSigner, tx_object: Value) -> Result<String, String> {
-    let span = span!(Level::INFO, "sign_transaction");
-    let _enter = span.enter();
-
-    let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)
-        .map_err(|e| format!("Failed to parse transaction request: {}", e))?;
-    let tx_envelope = tx_request
-        .build(&signer)
-        .await
-        .map_err(|e| format!("Failed to build transaction: {}", e))?;
+) -> AnyhowResult<JsonRpcReply<Value>> {
+    let tx_object = payload.params[0].to_owned();
+    let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
+    let tx_envelope = tx_request.build(&signer).await?;
     let mut encoded_tx = vec![];
     tx_envelope.encode(&mut encoded_tx);
-    let rlp_hex = hex::encode_prefixed(&encoded_tx);
+    let rlp_hex = hex::encode_prefixed(encoded_tx);
 
-    Ok(rlp_hex)
+    Ok(JsonRpcReply {
+        id: payload.id,
+        jsonrpc: payload.jsonrpc,
+        result: JsonRpcResult::Result(rlp_hex.into()),
+    })
 }
 
-async fn proxy_request_to_rpc(
+async fn handle_other_methods(
     payload: JsonRpcRequest<Vec<Value>>,
     rpc_url: &str,
-) -> Result<JsonRpcReply<Value>, (StatusCode, String)> {
-    let span = span!(Level::DEBUG, "proxy_request_to_rpc", rpc_url = %rpc_url);
-    let _enter = span.enter();
-
+) -> AnyhowResult<JsonRpcReply<Value>> {
     let client = Client::new();
-    let response = client
-        .post(rpc_url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let response = client.post(rpc_url).json(&payload).send().await?;
+    let json = response.json().await?;
 
-    response
-        .json()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+    Ok(json)
 }
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "yubihsm_signer_proxy=debug,tower_http=debug,axum::rejection=trace".into()
+            }),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     let opt = Opt::from_args();
-
-    let serial =
-        SerialNumber::from_str(&opt.device_serial_id).expect("Failed to parse serial number");
+    let serial = SerialNumber::from_str(&opt.device_serial_id).unwrap();
     let connector = Connector::usb(&UsbConfig {
         serial: Some(serial),
         timeout_ms: 20_000,
@@ -200,7 +149,10 @@ async fn main() {
     let app = Router::new()
         .route("/", post(handle_request))
         .with_state(shared_state)
-        .layer(TimeoutLayer::new(Duration::from_secs(10)));
+        .layer((
+            TraceLayer::new_for_http(),
+            TimeoutLayer::new(Duration::from_secs(10)),
+        ));
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     debug!("listening on {}", listener.local_addr().unwrap());
