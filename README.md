@@ -29,3 +29,25 @@ OPTIONS:
 ```bash
 cargo r -r -- -a 4 -d "001" -p "password" -s 1 -r "https://optimism-sepolia.drpc.org"
 ```
+
+## Test
+
+```bash
+curl -X POST -H "Content-Type: application/json" -d '{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "eth_signTransaction",
+    "params": [
+        {
+            "chainId": 11155420,
+            "data": "0x",
+            "from": "0x",
+            "gas": "0x7b0c",
+            "gasPrice": "0x1250b1",
+            "nonce": "0x0",
+            "to": "0x",
+            "value": "0x2386f26fc10000"
+        }
+    ]
+}' http://localhost:3000
+```
