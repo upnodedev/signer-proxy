@@ -91,7 +91,7 @@ async fn handle_request(
         _ => handle_other_methods(payload, &state.rpc_url).await,
     };
 
-    result.map(|reply| AppJson(reply)).map_err(AppError)
+    result.map(AppJson).map_err(AppError)
 }
 
 async fn handle_eth_sign_transaction(
