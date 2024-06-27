@@ -5,7 +5,10 @@ use alloy::{
     primitives::hex,
     rlp::Encodable,
     rpc::types::eth::request::TransactionRequest,
-    signers::local::YubiSigner,
+    signers::local::{
+        yubihsm::{device::SerialNumber, Connector, Credentials, UsbConfig},
+        YubiSigner,
+    },
 };
 use anyhow::{anyhow, Result as AnyhowResult};
 use app_types::{AppError, AppJson, AppResult};
@@ -23,7 +26,6 @@ use tokio::{net::TcpListener, signal, sync::Mutex};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::debug;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use yubihsm::{device::SerialNumber, Connector, Credentials, UsbConfig};
 
 const USB_TIMEOUT_MS: u64 = 20_000;
 const HTTP_TIMEOUT_SECS: u64 = 10;

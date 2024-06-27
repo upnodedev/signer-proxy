@@ -5,25 +5,16 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.7.5", features = ["macros"] }
-tokio = { version = "1.38.0", features = ["full"] }
+tokio = { version = "1.38.0", features = ["rt-multi-thread", "signal"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-yubihsm = { version = "0.42.1", features = ["usb", "secp256k1"] }
-reqwest = { version = "0.12.4", features = ["json"] }
 structopt = "0.3"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 alloy = { git = "https://github.com/quertc/alloy", branch = "better-yubi", features = [
-  "k256",
-  "rpc",
   "rlp",
   "rpc-types",
-  "rpc-types-eth",
-  "consensus",
   "network",
-  "providers",
-  "signers",
-  "signer-local",
   "signer-yubihsm",
 ] }
 anyhow = "1.0.86"
