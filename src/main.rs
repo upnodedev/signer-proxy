@@ -15,7 +15,6 @@ use axum::{
     routing::post,
     Router,
 };
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
@@ -32,10 +31,6 @@ const HTTP_TIMEOUT_SECS: u64 = 10;
 #[derive(StructOpt, Debug)]
 #[structopt(name = "yubihsm-signer-proxy")]
 struct Opt {
-    /// RPC URL
-    #[structopt(short, long, env = "RPC_URL")]
-    rpc_url: String,
-
     /// YubiHSM device serial ID
     #[structopt(short, long, env = "YUBIHSM_DEVICE_SERIAL_ID")]
     device_serial_id: String,
@@ -51,7 +46,6 @@ struct Opt {
 
 #[derive(Clone)]
 struct AppState {
-    rpc_url: String,
     connector: Connector,
     credentials: Credentials,
     signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
@@ -88,11 +82,14 @@ async fn handle_request(
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
     let method = payload.method.as_str();
-    let eth_signer = get_signer(state.clone(), key_id).await.map_err(AppError)?;
+    let eth_signer = get_signer(state.clone(), key_id).await?;
 
     let result = match method {
         "eth_signTransaction" => handle_eth_sign_transaction(payload, eth_signer).await,
-        _ => handle_other_methods(payload, &state.rpc_url).await,
+        _ => Err(anyhow!(
+            "method not supported (eth_signTransaction only): {}",
+            method
+        )),
     };
 
     result.map(AppJson).map_err(AppError)
@@ -136,17 +133,6 @@ async fn handle_eth_sign_transaction(
     })
 }
 
-async fn handle_other_methods(
-    payload: JsonRpcRequest<Vec<Value>>,
-    rpc_url: &str,
-) -> AnyhowResult<JsonRpcReply<Value>> {
-    let client = Client::new();
-    let response = client.post(rpc_url).json(&payload).send().await?;
-    let json = response.json().await?;
-
-    Ok(json)
-}
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -166,7 +152,6 @@ async fn main() {
     });
     let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
     let shared_state = Arc::new(AppState {
-        rpc_url: opt.rpc_url,
         connector,
         credentials,
         signers: Arc::new(Mutex::new(HashMap::new())),
