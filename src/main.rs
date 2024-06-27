@@ -1,19 +1,29 @@
 mod app_types;
 
 use alloy::{
-    network::{EthereumSigner, TransactionBuilder},
+    network::{EthereumWallet, TransactionBuilder},
     primitives::hex,
     rlp::Encodable,
     rpc::types::eth::request::TransactionRequest,
-    signers::wallet::YubiWallet,
+    signers::local::YubiSigner,
 };
 use anyhow::{anyhow, Result as AnyhowResult};
 use app_types::{AppError, AppJson, AppResult};
-use axum::{debug_handler, extract::State, routing::post, Router};
+use axum::{
+    debug_handler,
+    extract::{Path, State},
+    routing::post,
+    Router,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use structopt::StructOpt;
 use tokio::{net::TcpListener, signal};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
@@ -42,16 +52,14 @@ struct Opt {
     /// YubiHSM auth key password
     #[structopt(short, long, env = "YUBIHSM_PASSWORD", hide_env_values = true)]
     password: String,
-
-    /// YubiHSM signing key ID
-    #[structopt(short, long, env = "YUBIHSM_SIGNING_KEY_ID")]
-    signing_key_id: u16,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct AppState {
     rpc_url: String,
-    signer: EthereumSigner,
+    connector: Connector,
+    credentials: Credentials,
+    signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,11 +88,16 @@ enum JsonRpcResult<T> {
 
 #[debug_handler]
 async fn handle_request(
+    Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
     let method = payload.method.as_str();
-    let eth_signer = state.signer.to_owned();
+
+    let eth_signer = match get_signer(state.clone(), key_id).await {
+        Ok(signer) => signer,
+        Err(e) => return Err(AppError(e)),
+    };
 
     let result = match method {
         "eth_signTransaction" => handle_eth_sign_transaction(payload, eth_signer).await,
@@ -94,9 +107,25 @@ async fn handle_request(
     result.map(AppJson).map_err(AppError)
 }
 
+async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumWallet> {
+    let mut signers = state.signers.lock().unwrap();
+
+    if let Some(signer) = signers.get(&key_id) {
+        return Ok(signer.clone());
+    } else {
+        let yubi_signer =
+            YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
+        let eth_signer = EthereumWallet::from(yubi_signer);
+
+        signers.insert(key_id, eth_signer.clone());
+
+        Ok(eth_signer)
+    }
+}
+
 async fn handle_eth_sign_transaction(
     payload: JsonRpcRequest<Vec<Value>>,
-    signer: EthereumSigner,
+    signer: EthereumWallet,
 ) -> AnyhowResult<JsonRpcReply<Value>> {
     if payload.params.is_empty() {
         return Err(anyhow!("params is empty"));
@@ -145,16 +174,15 @@ async fn main() {
         timeout_ms: USB_TIMEOUT_MS,
     });
     let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
-    let yubi_signer = YubiWallet::connect(connector, credentials, opt.signing_key_id);
-    let signer = EthereumSigner::from(yubi_signer);
-
     let shared_state = Arc::new(AppState {
         rpc_url: opt.rpc_url,
-        signer,
+        connector,
+        credentials,
+        signers: Arc::new(Mutex::new(HashMap::new())),
     });
 
     let app = Router::new()
-        .route("/", post(handle_request))
+        .route("/key/:key_id", post(handle_request))
         .with_state(shared_state)
         .layer((
             TraceLayer::new_for_http(),
