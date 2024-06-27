@@ -18,14 +18,9 @@ use axum::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use structopt::StructOpt;
-use tokio::{net::TcpListener, signal};
+use tokio::{net::TcpListener, signal, sync::Mutex};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::debug;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -93,11 +88,7 @@ async fn handle_request(
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
     let method = payload.method.as_str();
-
-    let eth_signer = match get_signer(state.clone(), key_id).await {
-        Ok(signer) => signer,
-        Err(e) => return Err(AppError(e)),
-    };
+    let eth_signer = get_signer(state.clone(), key_id).await.map_err(AppError)?;
 
     let result = match method {
         "eth_signTransaction" => handle_eth_sign_transaction(payload, eth_signer).await,
@@ -108,19 +99,19 @@ async fn handle_request(
 }
 
 async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumWallet> {
-    let mut signers = state.signers.lock().unwrap();
+    let mut signers = state.signers.lock().await;
 
     if let Some(signer) = signers.get(&key_id) {
         return Ok(signer.clone());
-    } else {
-        let yubi_signer =
-            YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
-        let eth_signer = EthereumWallet::from(yubi_signer);
-
-        signers.insert(key_id, eth_signer.clone());
-
-        Ok(eth_signer)
     }
+
+    let yubi_signer =
+        YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
+    let eth_signer = EthereumWallet::from(yubi_signer);
+
+    signers.insert(key_id, eth_signer.clone());
+
+    Ok(eth_signer)
 }
 
 async fn handle_eth_sign_transaction(
