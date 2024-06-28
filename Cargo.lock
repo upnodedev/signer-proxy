@@ -3558,6 +3558,7 @@ dependencies = [
  "serde",
  "serde_json",
  "structopt",
+ "strum",
  "tokio",
  "tower-http",
  "tracing",
