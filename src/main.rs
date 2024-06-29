@@ -41,39 +41,41 @@ enum Mode {
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "yubihsm-signer-proxy")]
-struct Opt {
-    /// Connection mode (usb or http)
-    #[structopt(short, long, possible_values = Mode::VARIANTS, case_insensitive = true, default_value = "usb")]
-    mode: Mode,
+enum Opt {
+    Serve {
+        /// Connection mode (usb or http)
+        #[structopt(short, long, possible_values = Mode::VARIANTS, case_insensitive = true, default_value = "usb")]
+        mode: Mode,
 
-    /// YubiHSM device serial ID (for USB mode)
-    #[structopt(
-        short,
-        long = "device-serial",
-        env = "YUBIHSM_DEVICE_SERIAL_ID",
-        required_if("mode", "usb")
-    )]
-    device_serial_id: Option<String>,
+        /// YubiHSM device serial ID (for USB mode)
+        #[structopt(
+            short,
+            long = "device-serial",
+            env = "YUBIHSM_DEVICE_SERIAL_ID",
+            required_if("mode", "usb")
+        )]
+        device_serial_id: Option<String>,
 
-    /// YubiHSM HTTP address (for HTTP mode)
-    #[structopt(
-        long = "addr",
-        env = "YUBIHSM_HTTP_ADDRESS",
-        required_if("mode", "http")
-    )]
-    http_address: Option<String>,
+        /// YubiHSM HTTP address (for HTTP mode)
+        #[structopt(
+            long = "addr",
+            env = "YUBIHSM_HTTP_ADDRESS",
+            required_if("mode", "http")
+        )]
+        http_address: Option<String>,
 
-    /// YubiHSM HTTP port (for HTTP mode)
-    #[structopt(long = "port", env = "YUBIHSM_HTTP_PORT", required_if("mode", "http"))]
-    http_port: Option<u16>,
+        /// YubiHSM HTTP port (for HTTP mode)
+        #[structopt(long = "port", env = "YUBIHSM_HTTP_PORT", required_if("mode", "http"))]
+        http_port: Option<u16>,
 
-    /// YubiHSM auth key ID
-    #[structopt(short, long = "auth-key", env = "YUBIHSM_AUTH_KEY_ID")]
-    auth_key_id: u16,
+        /// YubiHSM auth key ID
+        #[structopt(short, long = "auth-key", env = "YUBIHSM_AUTH_KEY_ID")]
+        auth_key_id: u16,
 
-    /// YubiHSM auth key password
-    #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
-    password: String,
+        /// YubiHSM auth key password
+        #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
+        password: String,
+    },
 }
 
 #[derive(Clone)]
@@ -178,50 +180,60 @@ async fn main() {
 
     let opt = Opt::from_args();
 
-    let connector = match opt.mode {
-        Mode::Usb => {
-            let serial = SerialNumber::from_str(
-                &opt.device_serial_id
-                    .expect("USB mode requires a device serial ID"),
-            )
-            .unwrap();
-            Connector::usb(&UsbConfig {
-                serial: Some(serial),
-                timeout_ms: DEFAULT_USB_TIMEOUT_MS,
-            })
+    match opt {
+        Opt::Serve {
+            mode,
+            device_serial_id,
+            http_address,
+            http_port,
+            auth_key_id,
+            password,
+        } => {
+            let connector = match mode {
+                Mode::Usb => {
+                    let serial = SerialNumber::from_str(
+                        &device_serial_id.expect("USB mode requires a device serial ID"),
+                    )
+                    .unwrap();
+                    Connector::usb(&UsbConfig {
+                        serial: Some(serial),
+                        timeout_ms: DEFAULT_USB_TIMEOUT_MS,
+                    })
+                }
+                Mode::Http => {
+                    let addr = http_address.expect("HTTP mode requires an address");
+                    let port = http_port.expect("HTTP mode requires a port");
+                    Connector::http(&HttpConfig {
+                        addr,
+                        port,
+                        timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
+                    })
+                }
+            };
+
+            let credentials = Credentials::from_password(auth_key_id, password.as_bytes());
+            let shared_state = Arc::new(AppState {
+                connector,
+                credentials,
+                signers: Arc::new(Mutex::new(HashMap::new())),
+            });
+
+            let app = Router::new()
+                .route("/key/:key_id", post(handle_request))
+                .with_state(shared_state)
+                .layer((
+                    TraceLayer::new_for_http(),
+                    TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
+                ));
+
+            let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            debug!("listening on {}", listener.local_addr().unwrap());
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .unwrap();
         }
-        Mode::Http => {
-            let addr = opt.http_address.expect("HTTP mode requires an address");
-            let port = opt.http_port.expect("HTTP mode requires a port");
-            Connector::http(&HttpConfig {
-                addr,
-                port,
-                timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
-            })
-        }
-    };
-
-    let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
-    let shared_state = Arc::new(AppState {
-        connector,
-        credentials,
-        signers: Arc::new(Mutex::new(HashMap::new())),
-    });
-
-    let app = Router::new()
-        .route("/key/:key_id", post(handle_request))
-        .with_state(shared_state)
-        .layer((
-            TraceLayer::new_for_http(),
-            TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
-        ));
-
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    debug!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
+    }
 }
 
 async fn shutdown_signal() {
