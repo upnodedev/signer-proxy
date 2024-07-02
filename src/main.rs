@@ -1,4 +1,5 @@
 mod app_types;
+mod cli;
 
 use alloy::{
     network::{EthereumWallet, TransactionBuilder},
@@ -21,11 +22,11 @@ use axum::{
     routing::post,
     Router,
 };
+use cli::{Command, Mode, Opt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use structopt::StructOpt;
-use strum::{EnumString, VariantNames};
 use tokio::{net::TcpListener, signal, sync::Mutex};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::debug;
@@ -34,64 +35,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
 const API_TIMEOUT_SECS: u64 = 10;
-
-#[derive(EnumString, VariantNames, Debug)]
-#[strum(serialize_all = "kebab_case")]
-enum Mode {
-    Usb,
-    Http,
-}
-
-#[derive(StructOpt)]
-struct Opt {
-    /// Connection mode (usb or http)
-    #[structopt(short, long, possible_values = Mode::VARIANTS, case_insensitive = true, default_value = "usb")]
-    mode: Mode,
-
-    /// YubiHSM device serial ID (for USB mode)
-    #[structopt(
-        short,
-        long = "device-serial",
-        env = "YUBIHSM_DEVICE_SERIAL_ID",
-        required_if("mode", "usb")
-    )]
-    device_serial_id: Option<String>,
-
-    /// YubiHSM HTTP address (for HTTP mode)
-    #[structopt(
-        long = "addr",
-        env = "YUBIHSM_HTTP_ADDRESS",
-        required_if("mode", "http")
-    )]
-    http_address: Option<String>,
-
-    /// YubiHSM HTTP port (for HTTP mode)
-    #[structopt(long = "port", env = "YUBIHSM_HTTP_PORT", required_if("mode", "http"))]
-    http_port: Option<u16>,
-
-    /// YubiHSM auth key ID
-    #[structopt(short, long = "auth-key", env = "YUBIHSM_AUTH_KEY_ID")]
-    auth_key_id: u16,
-
-    /// YubiHSM auth key password
-    #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
-    password: String,
-
-    #[structopt(subcommand)] // Note that we mark a field as a subcommand
-    cmd: Command,
-}
-
-#[derive(StructOpt)]
-enum Command {
-    Serve,
-    GenerateKey {
-        #[structopt(short, long, default_value)]
-        label: String,
-        #[structopt(short, long)]
-        exportable: bool,
-    },
-}
-
 #[derive(Clone)]
 struct AppState {
     connector: Connector,
@@ -167,7 +110,7 @@ async fn handle_eth_sign_transaction(
         return Err(anyhow!("params is empty"));
     }
 
-    let tx_object = payload.params[0].to_owned();
+    let tx_object = payload.params[0].clone();
     let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
     let tx_envelope = tx_request.build(&signer).await?;
     let mut encoded_tx = vec![];
@@ -205,6 +148,36 @@ fn generate_new_key(
     Ok((id, signer.address()))
 }
 
+fn create_connector(opt: &Opt) -> Connector {
+    match opt.mode {
+        Mode::Usb => {
+            let serial = SerialNumber::from_str(
+                opt.device_serial_id
+                    .as_ref()
+                    .expect("USB mode requires a device serial ID"),
+            )
+            .unwrap();
+            Connector::usb(&UsbConfig {
+                serial: Some(serial),
+                timeout_ms: DEFAULT_USB_TIMEOUT_MS,
+            })
+        }
+        Mode::Http => {
+            let addr = opt
+                .http_address
+                .as_ref()
+                .expect("HTTP mode requires an address")
+                .clone();
+            let port = *opt.http_port.as_ref().expect("HTTP mode requires a port");
+            Connector::http(&HttpConfig {
+                addr,
+                port,
+                timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
+            })
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -218,32 +191,11 @@ async fn main() {
 
     let opt = Opt::from_args();
 
+    let connector = create_connector(&opt);
+    let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
+
     match opt.cmd {
         Command::Serve => {
-            let connector = match opt.mode {
-                Mode::Usb => {
-                    let serial = SerialNumber::from_str(
-                        &opt.device_serial_id
-                            .expect("USB mode requires a device serial ID"),
-                    )
-                    .unwrap();
-                    Connector::usb(&UsbConfig {
-                        serial: Some(serial),
-                        timeout_ms: DEFAULT_USB_TIMEOUT_MS,
-                    })
-                }
-                Mode::Http => {
-                    let addr = opt.http_address.expect("HTTP mode requires an address");
-                    let port = opt.http_port.expect("HTTP mode requires a port");
-                    Connector::http(&HttpConfig {
-                        addr,
-                        port,
-                        timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
-                    })
-                }
-            };
-
-            let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
             let shared_state = Arc::new(AppState {
                 connector,
                 credentials,
@@ -266,37 +218,8 @@ async fn main() {
                 .unwrap();
         }
         Command::GenerateKey { label, exportable } => {
-            println!("Generating new key...");
-            println!("Label: {}", label);
-            println!("Exportable: {}", exportable);
-            let (id, address) = generate_new_key(
-                match opt.mode {
-                    Mode::Usb => {
-                        let serial = SerialNumber::from_str(
-                            &opt.device_serial_id
-                                .expect("USB mode requires a device serial ID"),
-                        )
-                        .unwrap();
-                        Connector::usb(&UsbConfig {
-                            serial: Some(serial),
-                            timeout_ms: DEFAULT_USB_TIMEOUT_MS,
-                        })
-                    }
-                    Mode::Http => {
-                        let addr = opt.http_address.expect("HTTP mode requires an address");
-                        let port = opt.http_port.expect("HTTP mode requires a port");
-                        Connector::http(&HttpConfig {
-                            addr,
-                            port,
-                            timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
-                        })
-                    }
-                },
-                Credentials::from_password(opt.auth_key_id, opt.password.as_bytes()),
-                label,
-                exportable,
-            )
-            .unwrap();
+            let (id, address) =
+                generate_new_key(connector, credentials, label, exportable).unwrap();
 
             println!("Key ID: {}", id);
             println!("Address: {}", address);
