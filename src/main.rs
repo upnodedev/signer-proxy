@@ -2,11 +2,14 @@ mod app_types;
 
 use alloy::{
     network::{EthereumWallet, TransactionBuilder},
-    primitives::hex,
+    primitives::{hex, Address},
     rlp::Encodable,
     rpc::types::eth::request::TransactionRequest,
     signers::local::{
-        yubihsm::{device::SerialNumber, Connector, Credentials, HttpConfig, UsbConfig},
+        yubihsm::{
+            asymmetric::Algorithm::EcK256, device::SerialNumber, Capability, Client, Connector,
+            Credentials, Domain, HttpConfig, UsbConfig,
+        },
         YubiSigner,
     },
 };
@@ -39,42 +42,53 @@ enum Mode {
     Http,
 }
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "yubihsm-signer-proxy")]
-enum Opt {
-    Serve {
-        /// Connection mode (usb or http)
-        #[structopt(short, long, possible_values = Mode::VARIANTS, case_insensitive = true, default_value = "usb")]
-        mode: Mode,
+#[derive(StructOpt)]
+struct Opt {
+    /// Connection mode (usb or http)
+    #[structopt(short, long, possible_values = Mode::VARIANTS, case_insensitive = true, default_value = "usb")]
+    mode: Mode,
 
-        /// YubiHSM device serial ID (for USB mode)
-        #[structopt(
-            short,
-            long = "device-serial",
-            env = "YUBIHSM_DEVICE_SERIAL_ID",
-            required_if("mode", "usb")
-        )]
-        device_serial_id: Option<String>,
+    /// YubiHSM device serial ID (for USB mode)
+    #[structopt(
+        short,
+        long = "device-serial",
+        env = "YUBIHSM_DEVICE_SERIAL_ID",
+        required_if("mode", "usb")
+    )]
+    device_serial_id: Option<String>,
 
-        /// YubiHSM HTTP address (for HTTP mode)
-        #[structopt(
-            long = "addr",
-            env = "YUBIHSM_HTTP_ADDRESS",
-            required_if("mode", "http")
-        )]
-        http_address: Option<String>,
+    /// YubiHSM HTTP address (for HTTP mode)
+    #[structopt(
+        long = "addr",
+        env = "YUBIHSM_HTTP_ADDRESS",
+        required_if("mode", "http")
+    )]
+    http_address: Option<String>,
 
-        /// YubiHSM HTTP port (for HTTP mode)
-        #[structopt(long = "port", env = "YUBIHSM_HTTP_PORT", required_if("mode", "http"))]
-        http_port: Option<u16>,
+    /// YubiHSM HTTP port (for HTTP mode)
+    #[structopt(long = "port", env = "YUBIHSM_HTTP_PORT", required_if("mode", "http"))]
+    http_port: Option<u16>,
 
-        /// YubiHSM auth key ID
-        #[structopt(short, long = "auth-key", env = "YUBIHSM_AUTH_KEY_ID")]
-        auth_key_id: u16,
+    /// YubiHSM auth key ID
+    #[structopt(short, long = "auth-key", env = "YUBIHSM_AUTH_KEY_ID")]
+    auth_key_id: u16,
 
-        /// YubiHSM auth key password
-        #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
-        password: String,
+    /// YubiHSM auth key password
+    #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
+    password: String,
+
+    #[structopt(subcommand)] // Note that we mark a field as a subcommand
+    cmd: Command,
+}
+
+#[derive(StructOpt)]
+enum Command {
+    Serve,
+    GenerateKey {
+        #[structopt(short, long, default_value)]
+        label: String,
+        #[structopt(short, long)]
+        exportable: bool,
     },
 }
 
@@ -167,6 +181,30 @@ async fn handle_eth_sign_transaction(
     })
 }
 
+fn generate_new_key(
+    connector: Connector,
+    credentials: Credentials,
+    label: String,
+    exportable: bool,
+) -> AnyhowResult<(u16, Address)> {
+    let client = Client::open(connector.clone(), credentials.clone(), true)?;
+    let capabilities = if exportable {
+        Capability::SIGN_ECDSA | Capability::EXPORTABLE_UNDER_WRAP
+    } else {
+        Capability::SIGN_ECDSA
+    };
+    let id = client.generate_asymmetric_key(
+        0,
+        label.as_str().into(),
+        Domain::all(),
+        capabilities,
+        EcK256,
+    )?;
+    let signer = YubiSigner::connect(connector, credentials, id)?;
+
+    Ok((id, signer.address()))
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -180,19 +218,13 @@ async fn main() {
 
     let opt = Opt::from_args();
 
-    match opt {
-        Opt::Serve {
-            mode,
-            device_serial_id,
-            http_address,
-            http_port,
-            auth_key_id,
-            password,
-        } => {
-            let connector = match mode {
+    match opt.cmd {
+        Command::Serve => {
+            let connector = match opt.mode {
                 Mode::Usb => {
                     let serial = SerialNumber::from_str(
-                        &device_serial_id.expect("USB mode requires a device serial ID"),
+                        &opt.device_serial_id
+                            .expect("USB mode requires a device serial ID"),
                     )
                     .unwrap();
                     Connector::usb(&UsbConfig {
@@ -201,8 +233,8 @@ async fn main() {
                     })
                 }
                 Mode::Http => {
-                    let addr = http_address.expect("HTTP mode requires an address");
-                    let port = http_port.expect("HTTP mode requires a port");
+                    let addr = opt.http_address.expect("HTTP mode requires an address");
+                    let port = opt.http_port.expect("HTTP mode requires a port");
                     Connector::http(&HttpConfig {
                         addr,
                         port,
@@ -211,7 +243,7 @@ async fn main() {
                 }
             };
 
-            let credentials = Credentials::from_password(auth_key_id, password.as_bytes());
+            let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
             let shared_state = Arc::new(AppState {
                 connector,
                 credentials,
@@ -232,6 +264,42 @@ async fn main() {
                 .with_graceful_shutdown(shutdown_signal())
                 .await
                 .unwrap();
+        }
+        Command::GenerateKey { label, exportable } => {
+            println!("Generating new key...");
+            println!("Label: {}", label);
+            println!("Exportable: {}", exportable);
+            let (id, address) = generate_new_key(
+                match opt.mode {
+                    Mode::Usb => {
+                        let serial = SerialNumber::from_str(
+                            &opt.device_serial_id
+                                .expect("USB mode requires a device serial ID"),
+                        )
+                        .unwrap();
+                        Connector::usb(&UsbConfig {
+                            serial: Some(serial),
+                            timeout_ms: DEFAULT_USB_TIMEOUT_MS,
+                        })
+                    }
+                    Mode::Http => {
+                        let addr = opt.http_address.expect("HTTP mode requires an address");
+                        let port = opt.http_port.expect("HTTP mode requires a port");
+                        Connector::http(&HttpConfig {
+                            addr,
+                            port,
+                            timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
+                        })
+                    }
+                },
+                Credentials::from_password(opt.auth_key_id, opt.password.as_bytes()),
+                label,
+                exportable,
+            )
+            .unwrap();
+
+            println!("Key ID: {}", id);
+            println!("Address: {}", address);
         }
     }
 }
