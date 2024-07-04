@@ -14,20 +14,21 @@ cargo r -r -- help
 
 #### Global options for `generate-key` and `serve` subcommands
 
-You can connect to YubiHSM2 using two methods: usb or http via `-m, --mode` option.
+> [!NOTE]  
+> You can connect to YubiHSM2 using two methods: usb or http via `-m, --mode` option.
 
 ````bash
-    -a, --auth-key <auth-key-id>              YubiHSM auth key ID [env: YUBIHSM_AUTH_KEY_ID=]
-    -d, --device-serial <device-serial-id>    YubiHSM device serial ID (for USB mode) [env: YUBIHSM_DEVICE_SERIAL_ID=]
-        --addr <http-address>                 YubiHSM HTTP address (for HTTP mode) [env: YUBIHSM_HTTP_ADDRESS=]
-        --port <http-port>                    YubiHSM HTTP port (for HTTP mode) [env: YUBIHSM_HTTP_PORT=]
-    -m, --mode <mode>                         Connection mode (usb or http) [default: usb]  [possible values: usb, http]
-    -p, --pass <password>                     YubiHSM auth key password [env: YUBIHSM_PASSWORD]
+-a, --auth-key <auth-key-id>              YubiHSM auth key ID [env: YUBIHSM_AUTH_KEY_ID=]
+-d, --device-serial <device-serial-id>    YubiHSM device serial ID (for USB mode) [env: YUBIHSM_DEVICE_SERIAL_ID=]
+    --addr <http-address>                 YubiHSM HTTP address (for HTTP mode) [env: YUBIHSM_HTTP_ADDRESS=]
+    --port <http-port>                    YubiHSM HTTP port (for HTTP mode) [env: YUBIHSM_HTTP_PORT=]
+-m, --mode <mode>                         Connection mode (usb or http) [default: usb]  [possible values: usb, http]
+-p, --pass <password>                     YubiHSM auth key password [env: YUBIHSM_PASSWORD]
 ````
 
 ### generate-key
 
-Generates a valid secp256k1 key for signing eth transactions with capability SIGN_ECDSA and EXPORTABLE_UNDER_WRAP (if flag `-e, --exportable`). See docs about Capability [here](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-core-concepts.html#capability).
+Generates a valid secp256k1 key for signing eth transactions with capability `SIGN_ECDSA` and `EXPORTABLE_UNDER_WRAP` (if flag `-e, --exportable`). See docs about Capability [here](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-core-concepts.html#capability).
 
 ```bash
 cargo r -r -- -d <device-serial-id> -a <auth-key-id> -p <password> generate-key -l <label> -e
@@ -40,8 +41,8 @@ cargo r -r -- generate-key -h
 ```
 
 ```bash
-    -e, --exportable    The key will be exportable or not
-    -l, --label <label>    Key label [default: ]
+-e, --exportable       The key will be exportable or not
+-l, --label <label>    Key label [default: ]
 ```
 
 ## serve
