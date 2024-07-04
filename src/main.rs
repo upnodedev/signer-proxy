@@ -1,57 +1,45 @@
 mod app_types;
+mod cli;
 
 use alloy::{
-    network::{EthereumSigner, TransactionBuilder},
-    primitives::hex,
+    network::{EthereumWallet, TransactionBuilder},
+    primitives::{hex, Address},
     rlp::Encodable,
     rpc::types::eth::request::TransactionRequest,
-    signers::wallet::YubiWallet,
+    signers::local::{
+        yubihsm::{
+            asymmetric::Algorithm::EcK256, device::SerialNumber, Capability, Client, Connector,
+            Credentials, Domain, HttpConfig, UsbConfig,
+        },
+        YubiSigner,
+    },
 };
 use anyhow::{anyhow, Result as AnyhowResult};
 use app_types::{AppError, AppJson, AppResult};
-use axum::{debug_handler, extract::State, routing::post, Router};
-use reqwest::Client;
+use axum::{
+    debug_handler,
+    extract::{Path, State},
+    routing::post,
+    Router,
+};
+use cli::{Command, Mode, Opt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use structopt::StructOpt;
-use tokio::{net::TcpListener, signal};
+use tokio::{net::TcpListener, signal, sync::Mutex};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::debug;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use yubihsm::{device::SerialNumber, Connector, Credentials, UsbConfig};
 
-const USB_TIMEOUT_MS: u64 = 20_000;
-const HTTP_TIMEOUT_SECS: u64 = 10;
-
-#[derive(StructOpt, Debug)]
-#[structopt(name = "yubihsm-signer-proxy")]
-struct Opt {
-    /// RPC URL
-    #[structopt(short, long, env = "RPC_URL")]
-    rpc_url: String,
-
-    /// YubiHSM device serial ID
-    #[structopt(short, long, env = "YUBIHSM_DEVICE_SERIAL_ID")]
-    device_serial_id: String,
-
-    /// YubiHSM auth key ID
-    #[structopt(short, long, env = "YUBIHSM_AUTH_KEY_ID")]
-    auth_key_id: u16,
-
-    /// YubiHSM auth key password
-    #[structopt(short, long, env = "YUBIHSM_PASSWORD", hide_env_values = true)]
-    password: String,
-
-    /// YubiHSM signing key ID
-    #[structopt(short, long, env = "YUBIHSM_SIGNING_KEY_ID")]
-    signing_key_id: u16,
-}
-
-#[derive(Clone, Debug)]
+const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
+const API_TIMEOUT_SECS: u64 = 10;
+#[derive(Clone)]
 struct AppState {
-    rpc_url: String,
-    signer: EthereumSigner,
+    connector: Connector,
+    credentials: Credentials,
+    signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,29 +68,49 @@ enum JsonRpcResult<T> {
 
 #[debug_handler]
 async fn handle_request(
+    Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
     let method = payload.method.as_str();
-    let eth_signer = state.signer.to_owned();
+    let eth_signer = get_signer(state.clone(), key_id).await?;
 
     let result = match method {
         "eth_signTransaction" => handle_eth_sign_transaction(payload, eth_signer).await,
-        _ => handle_other_methods(payload, &state.rpc_url).await,
+        _ => Err(anyhow!(
+            "method not supported (eth_signTransaction only): {}",
+            method
+        )),
     };
 
     result.map(AppJson).map_err(AppError)
 }
 
+async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumWallet> {
+    let mut signers = state.signers.lock().await;
+
+    if let Some(signer) = signers.get(&key_id) {
+        return Ok(signer.clone());
+    }
+
+    let yubi_signer =
+        YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
+    let eth_signer = EthereumWallet::from(yubi_signer);
+
+    signers.insert(key_id, eth_signer.clone());
+
+    Ok(eth_signer)
+}
+
 async fn handle_eth_sign_transaction(
     payload: JsonRpcRequest<Vec<Value>>,
-    signer: EthereumSigner,
+    signer: EthereumWallet,
 ) -> AnyhowResult<JsonRpcReply<Value>> {
     if payload.params.is_empty() {
         return Err(anyhow!("params is empty"));
     }
 
-    let tx_object = payload.params[0].to_owned();
+    let tx_object = payload.params[0].clone();
     let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
     let tx_envelope = tx_request.build(&signer).await?;
     let mut encoded_tx = vec![];
@@ -116,15 +124,58 @@ async fn handle_eth_sign_transaction(
     })
 }
 
-async fn handle_other_methods(
-    payload: JsonRpcRequest<Vec<Value>>,
-    rpc_url: &str,
-) -> AnyhowResult<JsonRpcReply<Value>> {
-    let client = Client::new();
-    let response = client.post(rpc_url).json(&payload).send().await?;
-    let json = response.json().await?;
+fn generate_new_key(
+    connector: Connector,
+    credentials: Credentials,
+    label: String,
+    exportable: bool,
+) -> AnyhowResult<(u16, Address)> {
+    let client = Client::open(connector.clone(), credentials.clone(), true)?;
+    let capabilities = if exportable {
+        Capability::SIGN_ECDSA | Capability::EXPORTABLE_UNDER_WRAP
+    } else {
+        Capability::SIGN_ECDSA
+    };
+    let id = client.generate_asymmetric_key(
+        0,
+        label.as_str().into(),
+        Domain::all(),
+        capabilities,
+        EcK256,
+    )?;
+    let signer = YubiSigner::connect(connector, credentials, id)?;
 
-    Ok(json)
+    Ok((id, signer.address()))
+}
+
+fn create_connector(opt: &Opt) -> Connector {
+    match opt.mode {
+        Mode::Usb => {
+            let serial = SerialNumber::from_str(
+                opt.device_serial_id
+                    .as_ref()
+                    .expect("USB mode requires a device serial ID"),
+            )
+            .unwrap();
+            Connector::usb(&UsbConfig {
+                serial: Some(serial),
+                timeout_ms: DEFAULT_USB_TIMEOUT_MS,
+            })
+        }
+        Mode::Http => {
+            let addr = opt
+                .http_address
+                .as_ref()
+                .expect("HTTP mode requires an address")
+                .clone();
+            let port = *opt.http_port.as_ref().expect("HTTP mode requires a port");
+            Connector::http(&HttpConfig {
+                addr,
+                port,
+                timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
+            })
+        }
+    }
 }
 
 #[tokio::main]
@@ -139,34 +190,41 @@ async fn main() {
         .init();
 
     let opt = Opt::from_args();
-    let serial = SerialNumber::from_str(&opt.device_serial_id).unwrap();
-    let connector = Connector::usb(&UsbConfig {
-        serial: Some(serial),
-        timeout_ms: USB_TIMEOUT_MS,
-    });
+
+    let connector = create_connector(&opt);
     let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
-    let yubi_signer = YubiWallet::connect(connector, credentials, opt.signing_key_id);
-    let signer = EthereumSigner::from(yubi_signer);
 
-    let shared_state = Arc::new(AppState {
-        rpc_url: opt.rpc_url,
-        signer,
-    });
+    match opt.cmd {
+        Command::Serve => {
+            let shared_state = Arc::new(AppState {
+                connector,
+                credentials,
+                signers: Arc::new(Mutex::new(HashMap::new())),
+            });
 
-    let app = Router::new()
-        .route("/", post(handle_request))
-        .with_state(shared_state)
-        .layer((
-            TraceLayer::new_for_http(),
-            TimeoutLayer::new(Duration::from_secs(HTTP_TIMEOUT_SECS)),
-        ));
+            let app = Router::new()
+                .route("/key/:key_id", post(handle_request))
+                .with_state(shared_state)
+                .layer((
+                    TraceLayer::new_for_http(),
+                    TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
+                ));
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    debug!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
+            let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            debug!("listening on {}", listener.local_addr().unwrap());
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .unwrap();
+        }
+        Command::GenerateKey { label, exportable } => {
+            let (id, address) =
+                generate_new_key(connector, credentials, label, exportable).unwrap();
+
+            println!("Key ID: {}", id);
+            println!("Address: {}", address);
+        }
+    }
 }
 
 async fn shutdown_signal() {
