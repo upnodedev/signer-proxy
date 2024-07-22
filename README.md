@@ -74,5 +74,5 @@ curl -X POST -H "Content-Type: application/json" -d '{
             "value": "0x2386f26fc10000"
         }
     ]
-}' http://localhost:3000
+}' http://localhost:3000/key/{id}
 ```
