@@ -1,5 +1,5 @@
 use crate::app_types::{AppError, AppJson, AppResult};
-use crate::jsonrpc::{JsonRpcReply, JsonRpcRequest, JsonRpcResult};
+use crate::jsonrpc::{AddressResponse, JsonRpcReply, JsonRpcRequest, JsonRpcResult};
 use crate::shutdown_signal::shutdown_signal;
 use alloy::{
     network::{EthereumWallet, TransactionBuilder},
@@ -15,6 +15,9 @@ use alloy::{
     },
 };
 use anyhow::{anyhow, Result as AnyhowResult};
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::Json;
 use axum::{
     debug_handler,
     extract::{Path, State},
@@ -22,19 +25,19 @@ use axum::{
     Router,
 };
 use serde_json::Value;
-use tokio::net::TcpListener;
-use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::TraceLayer;
-use tracing::debug;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use structopt::StructOpt;
 use strum::{EnumString, VariantNames};
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::TraceLayer;
+use tracing::debug;
 
 const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
-const API_TIMEOUT_SECS: u64 = 10;
+const API_TIMEOUT_SECS: u64 = 30;
 
 #[derive(EnumString, VariantNames, Debug)]
 #[strum(serialize_all = "kebab_case")]
@@ -160,6 +163,27 @@ async fn handle_eth_sign_transaction(
     })
 }
 
+#[debug_handler]
+async fn handle_address_request(
+    Path(key_id): Path<u16>,
+    State(state): State<Arc<AppState>>,
+    AppJson(_payload): AppJson<JsonRpcRequest<Vec<Value>>>,
+) -> Result<Json<AddressResponse>, StatusCode> {
+    match get_address(state.clone(), key_id).await {
+        Ok(address) => Ok(Json(AddressResponse {
+            address: address.to_string(),
+        })),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+async fn get_address(state: Arc<AppState>, key_id: u16) -> AnyhowResult<Address> {
+    let yubi_signer =
+        YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
+
+    Ok(yubi_signer.address())
+}
+
 fn generate_new_key(
     connector: Connector,
     credentials: Credentials,
@@ -228,6 +252,7 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
 
             let app = Router::new()
                 .route("/key/:key_id", post(handle_request))
+                .route("/key/:key_id/address", get(handle_address_request))
                 .with_state(shared_state)
                 .layer((
                     TraceLayer::new_for_http(),

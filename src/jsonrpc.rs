@@ -23,3 +23,8 @@ pub enum JsonRpcResult<T> {
     Result(T),
     Error { code: i64, message: String },
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AddressResponse {
+    pub address: String
+}
