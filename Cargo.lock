@@ -2990,6 +2990,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "signer-proxy"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "aws-config",
+ "aws-sdk-kms",
+ "axum",
+ "serde",
+ "serde_json",
+ "structopt",
+ "strum",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3901,25 +3920,6 @@ dependencies = [
  "time",
  "uuid",
  "zeroize",
-]
-
-[[package]]
-name = "yubihsm-signer-proxy"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "anyhow",
- "aws-config",
- "aws-sdk-kms",
- "axum",
- "serde",
- "serde_json",
- "structopt",
- "strum",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

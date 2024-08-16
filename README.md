@@ -1,6 +1,6 @@
-# yubihsm-signer-proxy
+# signer-proxy
 
-An RPC signer proxy server that listens for the `eth_signTransaction` requests and performs transaction signing using the YubiHSM2 hardware signer.
+An RPC signer proxy server that listens for the `eth_signTransaction` requests and performs transaction signing using the YubiHSM2 hardware or AWS KMS signer.
 
 ## Subcommands
 
