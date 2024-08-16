@@ -1,11 +1,10 @@
-use crate::app_types::{AppError, AppJson, AppResult};
-use crate::jsonrpc::{AddressResponse, JsonRpcReply, JsonRpcRequest, JsonRpcResult};
+use crate::app_types::{AppJson, AppResult};
+use crate::jsonrpc::{AddressResponse, JsonRpcReply, JsonRpcRequest};
 use crate::shutdown_signal::shutdown_signal;
+use crate::signers::common::handle_eth_sign_jsonrpc;
 use alloy::{
-    network::{EthereumWallet, TransactionBuilder},
-    primitives::{hex, Address},
-    rlp::Encodable,
-    rpc::types::eth::request::TransactionRequest,
+    network::EthereumWallet,
+    primitives::Address,
     signers::local::{
         yubihsm::{
             asymmetric::Algorithm::EcK256, device::SerialNumber, Capability, Client, Connector,
@@ -14,7 +13,7 @@ use alloy::{
         YubiSigner,
     },
 };
-use anyhow::{anyhow, Result as AnyhowResult};
+use anyhow::Result as AnyhowResult;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Json;
@@ -111,18 +110,8 @@ async fn handle_request(
     State(state): State<Arc<AppState>>,
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
-    let method = payload.method.as_str();
     let eth_signer = get_signer(state.clone(), key_id).await?;
-
-    let result = match method {
-        "eth_signTransaction" => handle_eth_sign_transaction(payload, eth_signer).await,
-        _ => Err(anyhow!(
-            "method not supported (eth_signTransaction only): {}",
-            method
-        )),
-    };
-
-    result.map(AppJson).map_err(AppError)
+    handle_eth_sign_jsonrpc(payload, eth_signer).await
 }
 
 async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumWallet> {
@@ -139,28 +128,6 @@ async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumW
     signers.insert(key_id, eth_signer.clone());
 
     Ok(eth_signer)
-}
-
-async fn handle_eth_sign_transaction(
-    payload: JsonRpcRequest<Vec<Value>>,
-    signer: EthereumWallet,
-) -> AnyhowResult<JsonRpcReply<Value>> {
-    if payload.params.is_empty() {
-        return Err(anyhow!("params is empty"));
-    }
-
-    let tx_object = payload.params[0].clone();
-    let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
-    let tx_envelope = tx_request.build(&signer).await?;
-    let mut encoded_tx = vec![];
-    tx_envelope.encode(&mut encoded_tx);
-    let rlp_hex = hex::encode_prefixed(encoded_tx);
-
-    Ok(JsonRpcReply {
-        id: payload.id,
-        jsonrpc: payload.jsonrpc,
-        result: JsonRpcResult::Result(rlp_hex.into()),
-    })
 }
 
 #[debug_handler]

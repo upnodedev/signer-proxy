@@ -1,6 +1,6 @@
 use structopt::StructOpt;
 
-use crate::yubihsm::YubiOpt;
+use crate::signers::{aws_kms::AwsOpt, yubihsm::YubiOpt};
 
 #[derive(StructOpt)]
 pub struct Opt {
@@ -11,4 +11,5 @@ pub struct Opt {
 #[derive(StructOpt)]
 pub enum Command {
     Yubihsm(YubiOpt),
+    AwsKms(AwsOpt),
 }

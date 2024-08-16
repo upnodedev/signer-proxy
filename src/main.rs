@@ -2,12 +2,12 @@ mod app_types;
 mod cli;
 mod jsonrpc;
 mod shutdown_signal;
-mod yubihsm;
+mod signers;
 
 use cli::{Command, Opt};
 use structopt::StructOpt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use yubihsm::handle_yubihsm;
+use signers::{aws_kms::handle_aws_kms, yubihsm::handle_yubihsm};
 
 #[tokio::main]
 async fn main() {
@@ -25,6 +25,9 @@ async fn main() {
     match opt.cmd {
         Command::Yubihsm(yubi_opt) => {
             handle_yubihsm(yubi_opt).await;
-        }
+        },
+        Command::AwsKms(aws_opt) => {
+            handle_aws_kms(aws_opt).await;
+        },
     }
 }
