@@ -108,7 +108,7 @@ struct AppState {
 async fn handle_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
-    AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
+    AppJson(payload): AppJson<Value>,
 ) -> AppResult<JsonRpcReply<Value>> {
     info!("{:?}", payload);
     println!("{:?}", payload);
