@@ -113,7 +113,8 @@ async fn handle_request(
     info!("{:?}", payload);
     println!("{:?}", payload);
     let eth_signer = get_signer(state.clone(), key_id).await?;
-    handle_eth_sign_jsonrpc(payload, eth_signer).await
+    // handle_eth_sign_jsonrpc(payload, eth_signer).await
+    todo!()
 }
 
 async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumWallet> {
