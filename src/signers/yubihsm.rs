@@ -32,7 +32,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::debug;
+use tracing::{debug, info};
 
 const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
@@ -110,6 +110,7 @@ async fn handle_request(
     State(state): State<Arc<AppState>>,
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
+    info!("{:?}", payload);
     println!("{:?}", payload);
     let eth_signer = get_signer(state.clone(), key_id).await?;
     handle_eth_sign_jsonrpc(payload, eth_signer).await
