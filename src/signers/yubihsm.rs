@@ -110,6 +110,7 @@ async fn handle_request(
     State(state): State<Arc<AppState>>,
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
+    println!("{:?}", payload);
     let eth_signer = get_signer(state.clone(), key_id).await?;
     handle_eth_sign_jsonrpc(payload, eth_signer).await
 }
@@ -226,7 +227,7 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
                     TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
                 ));
 
-            let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            let listener = TcpListener::bind("0.0.0.0:3005").await.unwrap();
             debug!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
