@@ -32,7 +32,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, info};
+use tracing::debug;
 
 const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
@@ -108,13 +108,11 @@ struct AppState {
 async fn handle_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
-    AppJson(payload): AppJson<Value>,
+    AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
-    info!("{:?}", payload);
     println!("{:?}", payload);
     let eth_signer = get_signer(state.clone(), key_id).await?;
-    // handle_eth_sign_jsonrpc(payload, eth_signer).await
-    todo!()
+    handle_eth_sign_jsonrpc(payload, eth_signer).await
 }
 
 async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumWallet> {
@@ -229,7 +227,7 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
                     TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
                 ));
 
-            let listener = TcpListener::bind("0.0.0.0:3005").await.unwrap();
+            let listener = TcpListener::bind("0.0.0.0:4000").await.unwrap();
             debug!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())

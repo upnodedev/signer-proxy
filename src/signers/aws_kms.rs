@@ -104,7 +104,7 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
                     TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
                 ));
 
-            let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            let listener = TcpListener::bind("0.0.0.0:4000").await.unwrap();
             debug!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
