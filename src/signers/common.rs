@@ -43,7 +43,7 @@ pub async fn handle_health_status(
     Ok(JsonRpcReply {
         id: payload.id,
         jsonrpc: payload.jsonrpc,
-        result: JsonRpcResult::Result(option_env!("CARGO_PKG_VERSION").unwrap().into()),  // SAFE! shouldn't panic
+        result: JsonRpcResult::Result(env!("CARGO_PKG_VERSION").into()),
     })
 }
 

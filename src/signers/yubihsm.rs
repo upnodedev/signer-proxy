@@ -14,9 +14,7 @@ use alloy::{
     },
 };
 use anyhow::Result as AnyhowResult;
-use axum::http::StatusCode;
 use axum::routing::get;
-use axum::Json;
 use axum::{
     debug_handler,
     extract::{Path, State},
@@ -43,6 +41,8 @@ const API_TIMEOUT_SECS: u64 = 30;
 pub enum YubiMode {
     Usb,
     Http,
+    #[cfg(debug_assertions)]
+    Mock,
 }
 
 #[derive(StructOpt)]
@@ -136,20 +136,12 @@ async fn handle_address_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
     AppJson(_payload): AppJson<JsonRpcRequest<Vec<Value>>>,
-) -> Result<Json<AddressResponse>, StatusCode> {
-    match get_address(state.clone(), key_id).await {
-        Ok(address) => Ok(Json(AddressResponse {
-            address: address.to_string(),
-        })),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
+) -> AppResult<AddressResponse> {
+    let eth_signer = get_signer(state.clone(), key_id).await?;
+    let address = eth_signer.default_signer().address().to_string();
+    println!("{}", address);
 
-async fn get_address(state: Arc<AppState>, key_id: u16) -> AnyhowResult<Address> {
-    let yubi_signer =
-        YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
-
-    Ok(yubi_signer.address())
+    Ok(AppJson(AddressResponse { address }))
 }
 
 fn generate_new_key(
@@ -203,12 +195,17 @@ fn create_connector(opt: &YubiOpt) -> Connector {
                 timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
             })
         }
+        #[cfg(debug_assertions)]
+        YubiMode::Mock => Connector::mockhsm(),
     }
 }
 
 pub async fn handle_yubihsm(opt: YubiOpt) {
     let connector = create_connector(&opt);
+    #[cfg(not(debug_assertions))]
     let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
+    #[cfg(debug_assertions)]
+    let credentials = Credentials::from_password(1, "password".as_bytes());
 
     match opt.cmd {
         YubiCommand::Serve => {
