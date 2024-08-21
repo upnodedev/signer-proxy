@@ -2,6 +2,8 @@ use crate::app_types::{AppJson, AppResult};
 use crate::jsonrpc::{AddressResponse, JsonRpcReply, JsonRpcRequest};
 use crate::shutdown_signal::shutdown_signal;
 use crate::signers::common::handle_eth_sign_jsonrpc;
+#[cfg(debug_assertions)]
+use crate::signers::mock::{add_mock_wallets, MOCK_KEYS};
 use alloy::{
     network::EthereumWallet,
     primitives::Address,
@@ -98,10 +100,10 @@ pub enum YubiCommand {
 }
 
 #[derive(Clone)]
-struct AppState {
-    connector: Connector,
-    credentials: Credentials,
-    signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
+pub struct AppState {
+    pub connector: Connector,
+    pub credentials: Credentials,
+    pub signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
 }
 
 #[debug_handler]
@@ -135,11 +137,9 @@ async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumW
 async fn handle_address_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
-    AppJson(_payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<AddressResponse> {
     let eth_signer = get_signer(state.clone(), key_id).await?;
     let address = eth_signer.default_signer().address().to_string();
-    println!("{}", address);
 
     Ok(AppJson(AddressResponse { address }))
 }
@@ -214,6 +214,19 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
                 credentials,
                 signers: Arc::new(Mutex::new(HashMap::new())),
             });
+
+            #[cfg(debug_assertions)]
+            add_mock_wallets(
+                shared_state.clone(),
+                MOCK_KEYS
+                    .iter()
+                    .map(|&(key_id, private_key, address)| {
+                        (key_id, private_key, address.to_string())
+                    })
+                    .collect(),
+            )
+            .await
+            .unwrap();
 
             let app = Router::new()
                 .route("/key/:key_id", post(handle_request))

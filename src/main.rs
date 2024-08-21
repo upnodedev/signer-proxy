@@ -5,9 +5,9 @@ mod shutdown_signal;
 mod signers;
 
 use cli::{Command, Opt};
+use signers::{aws_kms::handle_aws_kms, yubihsm::handle_yubihsm};
 use structopt::StructOpt;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use signers::{aws_kms::handle_aws_kms, yubihsm::handle_yubihsm};
 
 #[tokio::main]
 async fn main() {
@@ -25,9 +25,9 @@ async fn main() {
     match opt.cmd {
         Command::Yubihsm(yubi_opt) => {
             handle_yubihsm(yubi_opt).await;
-        },
+        }
         Command::AwsKms(aws_opt) => {
             handle_aws_kms(aws_opt).await;
-        },
+        }
     }
 }

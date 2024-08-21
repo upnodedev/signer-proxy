@@ -26,5 +26,5 @@ pub enum JsonRpcResult<T> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AddressResponse {
-    pub address: String
+    pub address: String,
 }

@@ -3,22 +3,32 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
 use alloy::signers::{aws::AwsSigner, Signer};
+use anyhow::Result as AnyhowResult;
 use aws_config::BehaviorVersion;
 use aws_sdk_kms::Client;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Json;
-use axum::{debug_handler, extract::{Path, State}, routing::post, Router};
+use axum::{
+    debug_handler,
+    extract::{Path, State},
+    routing::post,
+    Router,
+};
 use serde_json::Value;
 use structopt::StructOpt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
-use anyhow::Result as AnyhowResult;
 use tracing::debug;
 
 use crate::jsonrpc::AddressResponse;
-use crate::{app_types::{AppJson, AppResult}, jsonrpc::{JsonRpcReply, JsonRpcRequest}, shutdown_signal::shutdown_signal, signers::common::handle_eth_sign_jsonrpc};
+use crate::{
+    app_types::{AppJson, AppResult},
+    jsonrpc::{JsonRpcReply, JsonRpcRequest},
+    shutdown_signal::shutdown_signal,
+    signers::common::handle_eth_sign_jsonrpc,
+};
 
 #[derive(StructOpt)]
 pub struct AwsOpt {
@@ -87,7 +97,7 @@ async fn get_address(state: Arc<AppState>, key_id: String) -> AnyhowResult<Addre
 pub async fn handle_aws_kms(opt: AwsOpt) {
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let client = aws_sdk_kms::Client::new(&config);
-    
+
     match opt.cmd {
         AwsCommand::Serve => {
             let shared_state = Arc::new(AppState {
@@ -113,5 +123,3 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
         }
     }
 }
-
-
