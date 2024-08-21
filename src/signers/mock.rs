@@ -18,7 +18,7 @@ pub const MOCK_KEYS: &[(u16, [u8; 32], &str)] = &[
     ),
 ];
 
-pub async fn add_mock_wallets(
+pub async fn add_mock_signers(
     state: Arc<AppState>,
     keys: Vec<(u16, [u8; 32], String)>,
 ) -> AnyhowResult<()> {

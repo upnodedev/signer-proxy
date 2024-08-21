@@ -3,7 +3,7 @@ use crate::jsonrpc::{AddressResponse, JsonRpcReply, JsonRpcRequest};
 use crate::shutdown_signal::shutdown_signal;
 use crate::signers::common::handle_eth_sign_jsonrpc;
 #[cfg(debug_assertions)]
-use crate::signers::mock::{add_mock_wallets, MOCK_KEYS};
+use crate::signers::mock::{add_mock_signers, MOCK_KEYS};
 use alloy::{
     network::EthereumWallet,
     primitives::Address,
@@ -216,7 +216,7 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
             });
 
             #[cfg(debug_assertions)]
-            add_mock_wallets(
+            add_mock_signers(
                 shared_state.clone(),
                 MOCK_KEYS
                     .iter()
