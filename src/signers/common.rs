@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use alloy::{
     hex,
     network::{EthereumWallet, TransactionBuilder},
@@ -25,6 +27,8 @@ pub async fn handle_eth_sign_transaction(
     let tx_object = params[0].clone();
     let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
     let tx_envelope = tx_request.build(&signer).await?;
+    println!("tx_envelope: {:?}", tx_envelope.tx_type());
+    println!("tx_envelope: {:?}", tx_envelope);
 
     let mut encoded_tx = vec![];
     tx_envelope.encode(&mut encoded_tx);
