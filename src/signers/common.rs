@@ -27,13 +27,15 @@ pub async fn handle_eth_sign_transaction(
     let tx_envelope = tx_request.build(&signer).await?;
     println!("tx_envelope: {:?}", tx_envelope.tx_type());
     println!("tx_envelope: {:?}", tx_envelope);
+    tx_envelope.signature_hash();
 
     let mut encoded_tx = vec![];
+    encoded_tx.push(tx_envelope.tx_type() as u8);
     tx_envelope.encode(&mut encoded_tx);
     println!("encoded_tx: {:?}", encoded_tx);
     let rlp_hex = hex::encode_prefixed(encoded_tx);
 
-    println!("rlp_hex: {:?}", rlp_hex);;
+    println!("rlp_hex: {:?}", rlp_hex);
 
     Ok(JsonRpcReply {
         id: payload.id,
