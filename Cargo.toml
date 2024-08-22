@@ -21,5 +21,5 @@ alloy = { git = "https://github.com/quertc/alloy", branch = "better-yubi", featu
 anyhow = "1.0.86"
 tower-http = { version = "0.5.2", features = ["timeout", "trace"] }
 strum = { version = "0.26", features = ["derive"] }
-aws-config = { version = "1.5", default-features = false }
-aws-sdk-kms = { version = "1.36", default-features = false }
+aws-config = { version = "1.5.5" }
+aws-sdk-kms = { version = "1.40" }

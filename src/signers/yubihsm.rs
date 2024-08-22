@@ -134,7 +134,6 @@ async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumW
 async fn handle_address_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
-    AppJson(_payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> Result<Json<AddressResponse>, StatusCode> {
     match get_address(state.clone(), key_id).await {
         Ok(address) => Ok(Json(AddressResponse {

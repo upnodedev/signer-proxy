@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
 use alloy::signers::{aws::AwsSigner, Signer};
+use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
 use aws_sdk_kms::Client;
 use axum::http::StatusCode;
@@ -15,7 +16,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use anyhow::Result as AnyhowResult;
-use tracing::debug;
+use tracing::info;
 
 use crate::jsonrpc::AddressResponse;
 use crate::{app_types::{AppJson, AppResult}, jsonrpc::{JsonRpcReply, JsonRpcRequest}, shutdown_signal::shutdown_signal, signers::common::handle_eth_sign_jsonrpc};
@@ -68,7 +69,6 @@ async fn get_signer(state: Arc<AppState>, key_id: String) -> AnyhowResult<Ethere
 async fn handle_address_request(
     Path(key_id): Path<String>,
     State(state): State<Arc<AppState>>,
-    AppJson(_payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> Result<Json<AddressResponse>, StatusCode> {
     match get_address(state.clone(), key_id).await {
         Ok(address) => Ok(Json(AddressResponse {
@@ -85,7 +85,11 @@ async fn get_address(state: Arc<AppState>, key_id: String) -> AnyhowResult<Addre
 }
 
 pub async fn handle_aws_kms(opt: AwsOpt) {
-    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let config = aws_config::defaults(BehaviorVersion::latest())
+        .region(RegionProviderChain::default_provider())
+        .load()
+        .await;
+
     let client = aws_sdk_kms::Client::new(&config);
     
     match opt.cmd {
@@ -105,7 +109,7 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
                 ));
 
             let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-            debug!("listening on {}", listener.local_addr().unwrap());
+            info!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await
