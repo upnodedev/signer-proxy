@@ -50,7 +50,7 @@ pub enum YubiMode {
 #[derive(StructOpt)]
 pub struct YubiOpt {
     /// Connection mode (usb or http)
-    #[structopt(short, long, possible_values = YubiMode::VARIANTS, case_insensitive = true, default_value = "usb")]
+    #[structopt(short, long, possible_values = YubiMode::VARIANTS, case_insensitive = true, default_value = "usb", env = "YUBIHSM_MODE")]
     pub mode: YubiMode,
 
     /// YubiHSM device serial ID (for USB mode)
@@ -82,7 +82,7 @@ pub struct YubiOpt {
     #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
     pub password: String,
 
-    #[structopt(subcommand)] // Note that we mark a field as a subcommand
+    #[structopt(subcommand)]
     pub cmd: YubiCommand,
 }
 
