@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use alloy::{
     hex,
     network::{EthereumWallet, TransactionBuilder},
@@ -32,7 +30,10 @@ pub async fn handle_eth_sign_transaction(
 
     let mut encoded_tx = vec![];
     tx_envelope.encode(&mut encoded_tx);
+    println!("encoded_tx: {:?}", encoded_tx);
     let rlp_hex = hex::encode_prefixed(encoded_tx);
+
+    println!("rlp_hex: {:?}", rlp_hex);;
 
     Ok(JsonRpcReply {
         id: payload.id,
