@@ -50,6 +50,11 @@ struct AppState {
 const API_TIMEOUT_SECS: u64 = 30;
 
 #[debug_handler]
+async fn handle_ping() -> &'static str {
+    "pong"
+}
+
+#[debug_handler]
 async fn handle_request(
     Path(key_id): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -106,6 +111,7 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
             });
 
             let app = Router::new()
+                .route("/ping", get(handle_ping))
                 .route("/key/:key_id", post(handle_request))
                 .route("/key/:key_id/address", get(handle_address_request))
                 .with_state(shared_state)

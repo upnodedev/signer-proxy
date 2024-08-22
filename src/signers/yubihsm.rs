@@ -107,6 +107,11 @@ pub struct AppState {
 }
 
 #[debug_handler]
+async fn handle_ping() -> &'static str {
+    "pong"
+}
+
+#[debug_handler]
 async fn handle_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
@@ -229,6 +234,7 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
             .unwrap();
 
             let app = Router::new()
+                .route("/ping", get(handle_ping))
                 .route("/key/:key_id", post(handle_request))
                 .route("/key/:key_id/address", get(handle_address_request))
                 .with_state(shared_state)
