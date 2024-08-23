@@ -1,9 +1,10 @@
 use alloy::{
+    eips::eip2718::Encodable2718,
     hex,
     network::{EthereumWallet, TransactionBuilder},
-    rlp::Encodable,
     rpc::types::TransactionRequest,
 };
+
 use anyhow::{anyhow, Result as AnyhowResult};
 use serde_json::Value;
 
@@ -25,12 +26,9 @@ pub async fn handle_eth_sign_transaction(
     let tx_object = params[0].clone();
     let tx_request = serde_json::from_value::<TransactionRequest>(tx_object)?;
     let tx_envelope = tx_request.build(&signer).await?;
-    println!("tx_envelope: {:?}", tx_envelope.tx_type());
     println!("tx_envelope: {:?}", tx_envelope);
 
-    let mut encoded_tx = vec![];
-    tx_envelope.encode(&mut encoded_tx);
-    println!("encoded_tx: {:?}", encoded_tx);
+    let encoded_tx = tx_envelope.encoded_2718();
     let rlp_hex = hex::encode_prefixed(encoded_tx);
     println!("rlp_hex: {:?}", rlp_hex);
 

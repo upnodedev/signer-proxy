@@ -14,6 +14,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 alloy = { git = "https://github.com/quertc/alloy", branch = "better-yubi", features = [
   "rlp",
   "rpc-types",
+  "eips",
   "network",
   "signer-yubihsm",
   "signer-aws",
