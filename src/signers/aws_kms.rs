@@ -20,7 +20,7 @@ use structopt::StructOpt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
-use tracing::debug;
+use tracing::info;
 
 use crate::jsonrpc::AddressResponse;
 use crate::{
@@ -121,7 +121,7 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
                 ));
 
             let listener = TcpListener::bind("0.0.0.0:4000").await.unwrap();
-            debug!("listening on {}", listener.local_addr().unwrap());
+            info!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await

@@ -32,7 +32,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::debug;
+use tracing::info;
 
 const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
@@ -244,7 +244,7 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
                 ));
 
             let listener = TcpListener::bind("0.0.0.0:4000").await.unwrap();
-            debug!("listening on {}", listener.local_addr().unwrap());
+            info!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await
