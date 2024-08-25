@@ -2,6 +2,8 @@ use crate::app_types::{AppJson, AppResult};
 use crate::jsonrpc::{AddressResponse, JsonRpcReply, JsonRpcRequest};
 use crate::shutdown_signal::shutdown_signal;
 use crate::signers::common::handle_eth_sign_jsonrpc;
+#[cfg(debug_assertions)]
+use crate::signers::mock::{add_mock_signers, MOCK_KEYS};
 use alloy::{
     network::EthereumWallet,
     primitives::Address,
@@ -14,9 +16,7 @@ use alloy::{
     },
 };
 use anyhow::Result as AnyhowResult;
-use axum::http::StatusCode;
 use axum::routing::get;
-use axum::Json;
 use axum::{
     debug_handler,
     extract::{Path, State},
@@ -32,7 +32,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tracing::debug;
+use tracing::info;
 
 const DEFAULT_USB_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
@@ -43,12 +43,14 @@ const API_TIMEOUT_SECS: u64 = 30;
 pub enum YubiMode {
     Usb,
     Http,
+    #[cfg(debug_assertions)]
+    Mock,
 }
 
 #[derive(StructOpt)]
 pub struct YubiOpt {
     /// Connection mode (usb or http)
-    #[structopt(short, long, possible_values = YubiMode::VARIANTS, case_insensitive = true, default_value = "usb")]
+    #[structopt(short, long, possible_values = YubiMode::VARIANTS, case_insensitive = true, default_value = "usb", env = "YUBIHSM_MODE")]
     pub mode: YubiMode,
 
     /// YubiHSM device serial ID (for USB mode)
@@ -80,7 +82,7 @@ pub struct YubiOpt {
     #[structopt(short, long = "pass", env = "YUBIHSM_PASSWORD", hide_env_values = true)]
     pub password: String,
 
-    #[structopt(subcommand)] // Note that we mark a field as a subcommand
+    #[structopt(subcommand)]
     pub cmd: YubiCommand,
 }
 
@@ -98,10 +100,15 @@ pub enum YubiCommand {
 }
 
 #[derive(Clone)]
-struct AppState {
-    connector: Connector,
-    credentials: Credentials,
-    signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
+pub struct AppState {
+    pub connector: Connector,
+    pub credentials: Credentials,
+    pub signers: Arc<Mutex<HashMap<u16, EthereumWallet>>>,
+}
+
+#[debug_handler]
+async fn handle_ping() -> &'static str {
+    "pong"
 }
 
 #[debug_handler]
@@ -110,6 +117,7 @@ async fn handle_request(
     State(state): State<Arc<AppState>>,
     AppJson(payload): AppJson<JsonRpcRequest<Vec<Value>>>,
 ) -> AppResult<JsonRpcReply<Value>> {
+    println!("{:?}", payload);
     let eth_signer = get_signer(state.clone(), key_id).await?;
     handle_eth_sign_jsonrpc(payload, eth_signer).await
 }
@@ -134,20 +142,11 @@ async fn get_signer(state: Arc<AppState>, key_id: u16) -> AnyhowResult<EthereumW
 async fn handle_address_request(
     Path(key_id): Path<u16>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<AddressResponse>, StatusCode> {
-    match get_address(state.clone(), key_id).await {
-        Ok(address) => Ok(Json(AddressResponse {
-            address: address.to_string(),
-        })),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
+) -> AppResult<AddressResponse> {
+    let eth_signer = get_signer(state.clone(), key_id).await?;
+    let address = eth_signer.default_signer().address().to_string();
 
-async fn get_address(state: Arc<AppState>, key_id: u16) -> AnyhowResult<Address> {
-    let yubi_signer =
-        YubiSigner::connect(state.connector.clone(), state.credentials.clone(), key_id)?;
-
-    Ok(yubi_signer.address())
+    Ok(AppJson(AddressResponse { address }))
 }
 
 fn generate_new_key(
@@ -201,12 +200,17 @@ fn create_connector(opt: &YubiOpt) -> Connector {
                 timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
             })
         }
+        #[cfg(debug_assertions)]
+        YubiMode::Mock => Connector::mockhsm(),
     }
 }
 
 pub async fn handle_yubihsm(opt: YubiOpt) {
     let connector = create_connector(&opt);
+    #[cfg(not(debug_assertions))]
     let credentials = Credentials::from_password(opt.auth_key_id, opt.password.as_bytes());
+    #[cfg(debug_assertions)]
+    let credentials = Credentials::from_password(1, "password".as_bytes());
 
     match opt.cmd {
         YubiCommand::Serve => {
@@ -216,7 +220,21 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
                 signers: Arc::new(Mutex::new(HashMap::new())),
             });
 
+            #[cfg(debug_assertions)]
+            add_mock_signers(
+                shared_state.clone(),
+                MOCK_KEYS
+                    .iter()
+                    .map(|&(key_id, private_key, address)| {
+                        (key_id, private_key, address.to_string())
+                    })
+                    .collect(),
+            )
+            .await
+            .unwrap();
+
             let app = Router::new()
+                .route("/ping", get(handle_ping))
                 .route("/key/:key_id", post(handle_request))
                 .route("/key/:key_id/address", get(handle_address_request))
                 .with_state(shared_state)
@@ -225,8 +243,8 @@ pub async fn handle_yubihsm(opt: YubiOpt) {
                     TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
                 ));
 
-            let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-            debug!("listening on {}", listener.local_addr().unwrap());
+            let listener = TcpListener::bind("0.0.0.0:4000").await.unwrap();
+            info!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await

@@ -1,11 +1,11 @@
 [package]
 name = "signer-proxy"
-version = "0.1.0"
+version = "1.0.0-rc.7"
 edition = "2021"
 
 [dependencies]
 axum = { version = "0.7.5", features = ["macros"] }
-tokio = { version = "1.38.0", features = ["rt-multi-thread", "signal"] }
+tokio = { version = "1.39.3", features = ["rt-multi-thread", "signal"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 structopt = "0.3"
@@ -14,12 +14,18 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 alloy = { git = "https://github.com/quertc/alloy", branch = "better-yubi", features = [
   "rlp",
   "rpc-types",
+  "eips",
   "network",
   "signer-yubihsm",
   "signer-aws",
 ] }
+yubihsm = { version = "0.42.1", features = ["secp256k1", "http", "usb"] }
 anyhow = "1.0.86"
 tower-http = { version = "0.5.2", features = ["timeout", "trace"] }
 strum = { version = "0.26", features = ["derive"] }
-aws-config = { version = "1.5.5" }
-aws-sdk-kms = { version = "1.40" }
+aws-config = "1.5.5"
+aws-sdk-kms = "1.40.0"
+
+[features]
+default = ["mock"]
+mock = ["yubihsm/mockhsm"]

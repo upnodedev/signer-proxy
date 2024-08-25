@@ -5,7 +5,7 @@ pub struct JsonRpcRequest<T> {
     pub jsonrpc: String,
     pub method: String,
     pub id: u64,
-    pub params: T,
+    pub params: Option<T>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -26,5 +26,5 @@ pub enum JsonRpcResult<T> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AddressResponse {
-    pub address: String
+    pub address: String,
 }

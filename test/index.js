@@ -63,15 +63,30 @@ async function main() {
 
   const nonce = await publicClient.getTransactionCount({ address })
 
+  // const transaction = {
+  //   from: address,
+  //   to: DEAD_ADDRESS,
+  //   value: parseEther('0.0001').toString(),
+  //   gas: 21500,
+  //   gasPrice: 1000000000,
+  //   nonce,
+  //   data: '0x123456',
+  //   chainId: chainId,
+  // };
+
   const transaction = {
     from: address,
     to: DEAD_ADDRESS,
     value: parseEther('0.0001').toString(),
-    gas: 21500,
-    gasPrice: 1000000000,
+    maxPriorityFeePerGas: '0x3b9aca00',
+    maxFeePerGas: '0xb2d05e00',
+    gas: '0x581c',
+    gasPrice: null,
+    input: '0x123456',
     nonce,
-    data: '0x123456',
-    chainId: chainId,
+    data: null,
+    chainId,
+    accessList: [],
   };
 
   const txResponse = await axios.post(endpoint, {

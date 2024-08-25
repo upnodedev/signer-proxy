@@ -3,23 +3,32 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use alloy::network::EthereumWallet;
 use alloy::primitives::Address;
 use alloy::signers::{aws::AwsSigner, Signer};
-use aws_config::meta::region::RegionProviderChain;
+use anyhow::Result as AnyhowResult;
 use aws_config::BehaviorVersion;
 use aws_sdk_kms::Client;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Json;
-use axum::{debug_handler, extract::{Path, State}, routing::post, Router};
+use axum::{
+    debug_handler,
+    extract::{Path, State},
+    routing::post,
+    Router,
+};
 use serde_json::Value;
 use structopt::StructOpt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
-use anyhow::Result as AnyhowResult;
 use tracing::info;
 
 use crate::jsonrpc::AddressResponse;
-use crate::{app_types::{AppJson, AppResult}, jsonrpc::{JsonRpcReply, JsonRpcRequest}, shutdown_signal::shutdown_signal, signers::common::handle_eth_sign_jsonrpc};
+use crate::{
+    app_types::{AppJson, AppResult},
+    jsonrpc::{JsonRpcReply, JsonRpcRequest},
+    shutdown_signal::shutdown_signal,
+    signers::common::handle_eth_sign_jsonrpc,
+};
 
 #[derive(StructOpt)]
 pub struct AwsOpt {
@@ -39,6 +48,11 @@ struct AppState {
 }
 
 const API_TIMEOUT_SECS: u64 = 30;
+
+#[debug_handler]
+async fn handle_ping() -> &'static str {
+    "pong"
+}
 
 #[debug_handler]
 async fn handle_request(
@@ -86,12 +100,11 @@ async fn get_address(state: Arc<AppState>, key_id: String) -> AnyhowResult<Addre
 
 pub async fn handle_aws_kms(opt: AwsOpt) {
     let config = aws_config::defaults(BehaviorVersion::latest())
-        .region(RegionProviderChain::default_provider())
         .load()
         .await;
 
     let client = aws_sdk_kms::Client::new(&config);
-    
+
     match opt.cmd {
         AwsCommand::Serve => {
             let shared_state = Arc::new(AppState {
@@ -100,6 +113,7 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
             });
 
             let app = Router::new()
+                .route("/ping", get(handle_ping))
                 .route("/key/:key_id", post(handle_request))
                 .route("/key/:key_id/address", get(handle_address_request))
                 .with_state(shared_state)
@@ -108,7 +122,7 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
                     TimeoutLayer::new(Duration::from_secs(API_TIMEOUT_SECS)),
                 ));
 
-            let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            let listener = TcpListener::bind("0.0.0.0:4000").await.unwrap();
             info!("listening on {}", listener.local_addr().unwrap());
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
@@ -117,5 +131,3 @@ pub async fn handle_aws_kms(opt: AwsOpt) {
         }
     }
 }
-
-
